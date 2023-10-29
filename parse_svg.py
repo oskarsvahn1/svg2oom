@@ -2,7 +2,7 @@ import xml.etree.ElementTree as ET
 SCALE = 10
 FLIP_Y = False
 
-tree = ET.parse('logga.svg')
+tree = ET.parse('loggaa.svg')
 root = tree.getroot()
 out_root = ET.Element('map', xmlns="http://openorienteering.org/apps/mapper/xml/v2", version="9")
 # georeferencing = ET.SubElement(root, 'georeferencing', scale="10000")
@@ -14,24 +14,30 @@ colors = ET.SubElement(barrier, 'colors')
 symbols = ET.SubElement(barrier, 'symbols', id="ISOM 2017-2")
 
 # Create a function to add a symbol element
-def add_symbol(id, fill_color):
-
+def add_color(id, fill_color):
     h = fill_color.lstrip('#')
     r, g, b = tuple(str(int(h[i:i+2], 16)/255) for i in (0, 2, 4))
     id = str(id)
-
     color = ET.SubElement(colors, 'color', priority=str(int(id)-1), name=f"SVG_{id}", c="0.35", m="0.85", y="0", k="0", opacity="1")
     ET.SubElement(color, 'rgb', method="custom", r=r, g=g, b=b)
     ET.SubElement(color, 'cmyk', method="rgb")
+
+def add_area_symbol(id):
     symbol = ET.SubElement(symbols, 'symbol', type=str(4), id=id, code=id, name=f"SVG_{id}")
     ET.SubElement(symbol, 'description')
     ET.SubElement(symbol, 'area_symbol', inner_color=str(int(id)-1), min_area="1125", patterns="0")
 
+def add_line_symbol(id, width):
+    symbol = ET.SubElement(symbols, 'symbol', type=str(2), id=id, code=id, name=f"SVG_{id}")
+    ET.SubElement(symbol, 'description')
+    ET.SubElement(symbol, 'line_symbol', color=str(int(id)-1), line_width=str(width), join_style="2", cap_style="1")
 
 parts = ET.SubElement(barrier, 'parts', count="1", current="0")
 part = ET.SubElement(parts, 'part', name="default part")
 objects = ET.SubElement(part, 'objects', count="1")
-last_color = ""
+last_fill_color = ""
+last_stroke_color = ""
+
 last_symbol = 0
 for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
     # Process i reverse because we want to have the last elements at top and with lowest priority (=at the top) in mapper
@@ -39,16 +45,27 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
     fill_color = None
     if not style:
         continue
-    for style_attr in style.split(';'):
-        if style_attr.startswith('fill:'):
-            fill_color = style_attr.split(':')[-1]
-            if fill_color == "none" or fill_color[:15] == "url(#linearGrad":
-                continue
-            if not fill_color == last_color:
-                last_symbol+=1
-                last_color = fill_color
-                add_symbol(str(last_symbol), fill_color)
-            # break
+    
+    # style = style.split(';')
+    style = {i.split(":")[0]: i.split(":")[1] for i in style.split(";")}
+    if style.get("stroke") and not style.get("stroke")=="none" :
+        stroke_color = style.get("stroke")
+        stroke_width = style.get("stroke-width")
+        if not stroke_color == last_stroke_color:
+            last_symbol+=1
+            last_stroke_color = stroke_color
+            add_color(str(last_symbol), stroke_color)
+            add_line_symbol(str(last_symbol), int(float(stroke_width)*SCALE))
+    if style.get("fill") and not style.get("fill")=="none" :
+        fill_color = style.get("fill")
+        if fill_color[:15] == "url(#linearGrad":
+            # Skip gradients
+            fill_color = last_fill_color
+        if not fill_color == last_fill_color:
+            last_symbol+=1
+            last_fill_color = fill_color
+            add_color(str(last_symbol), fill_color)
+            add_area_symbol(str(last_symbol))
 
     d = path.get('d')
     coordinates = []
@@ -147,8 +164,19 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
 
     # Remove potential 1
     coordinates[-1] = coordinates[-1][:2]
-    # Reverse y-component
+
+    # Move objects
+    if path.get("transform"):
+        transform = path.get("transform")
+        if transform[:9] == "translate":
+            x, y = transform[10:-1].split(",")
+            x = int(float(x)*SCALE)
+            y = int(float(y)*SCALE)
+
+            coordinates = [[c[0]+x, c[1]+y, c[2]]  if len(c)==3 else [c[0]+x, c[1]+y] for c in coordinates]
+
     if FLIP_Y:
+        # Reverse y-component
         coordinates = [[c[0], -c[1], c[2]]  if len(c)==3 else [c[0], -c[1]] for c in coordinates]
 
     str_coord =  ";".join([" ".join([str(i) for i in s]) for s in coordinates])
