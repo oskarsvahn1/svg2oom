@@ -4,6 +4,8 @@ FLIP_Y = False
 
 tree = ET.parse('loggaa.svg')
 root = tree.getroot()
+PARENT_MAP = {c:p for p in root.iter( ) for c in p}
+
 out_root = ET.Element('map', xmlns="http://openorienteering.org/apps/mapper/xml/v2", version="9")
 # georeferencing = ET.SubElement(root, 'georeferencing', scale="10000")
 # projected_crs = ET.SubElement(georeferencing, 'projected_crs', id="Local")
@@ -36,34 +38,50 @@ parts = ET.SubElement(barrier, 'parts', count="1", current="0")
 part = ET.SubElement(parts, 'part', name="default part")
 objects = ET.SubElement(part, 'objects', count="1")
 last_fill_color = ""
-last_stroke_color = ""
+last_style  = ""
+
+
+
+def get_coords(d, n, start, is_rel_coord, last_node=[0,0]):
+    cords = []
+    for i in range(start, start+n):
+        cord = d[i].split(",")
+        cord = [float(j)*SCALE for j in cord]
+        if is_rel_coord:
+            cord = [last_node[0] + cord[0], last_node[1] + cord[1]]
+        cords.append(cord)
+    return cords
 
 last_symbol = 0
 for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
     # Process i reverse because we want to have the last elements at top and with lowest priority (=at the top) in mapper
     style = path.get('style')
+    if not style:
+        style = PARENT_MAP[path].get("style")
     fill_color = None
     if not style:
         continue
-    
+
     # style = style.split(';')
     style = {i.split(":")[0]: i.split(":")[1] for i in style.split(";")}
     if style.get("stroke") and not style.get("stroke")=="none" :
         stroke_color = style.get("stroke")
         stroke_width = style.get("stroke-width")
-        if not stroke_color == last_stroke_color:
+        if not style == last_style:
             last_symbol+=1
+            last_style = style
             last_stroke_color = stroke_color
             add_color(str(last_symbol), stroke_color)
             add_line_symbol(str(last_symbol), int(float(stroke_width)*SCALE))
-    if style.get("fill") and not style.get("fill")=="none" :
+
+    elif style.get("fill") and not style.get("fill")=="none" :
         fill_color = style.get("fill")
         if fill_color[:15] == "url(#linearGrad":
             # Skip gradients
-            fill_color = last_fill_color
-        if not fill_color == last_fill_color:
+            fill_color = last_style.get("fill")
+        if not style == last_style:
             last_symbol+=1
-            last_fill_color = fill_color
+            last_style = style
             add_color(str(last_symbol), fill_color)
             add_area_symbol(str(last_symbol))
 
@@ -77,115 +95,125 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
     is_rel_coord = True
     doing_bezier = False
     skip_next = False
-    for i, item in enumerate(d):
-        try:
-            if skip_next:
-                skip_next = False
-                continue
-            if item.isalpha():
-                skip_next = True
-                arg = item
-                if item.lower() == "z" and i==len(d)-1:
-                    continue
-                if d[i+1].isalpha():
-                    cord = d[i+2].split(",")
-                    skip_next = False
-                else:
-                    cord = d[i+1].split(",")
-                cord = [int(float(i)*SCALE) for i in cord]
-
-                if arg.isupper():
-                    # Absolute position
-                    last_node = [0, 0]
-                    is_rel_coord = False
-                else:
-                    if i == 0:
-                        last_node = [0, 0]
-                    else:
-                        last_node = coordinates[-1]
-                    is_rel_coord = True
-                arg = arg.lower()
-
-                if arg == "v":
-                    last_node[0] = coordinates[-1][0]
-                    coordinates.append([last_node[0], cord[0] + last_node[1]])
-
-                elif arg == "h":
-                    last_node[1] = coordinates[-1][1]
-                    coordinates.append([last_node[0] + cord[0], last_node[1]])
-
-                elif arg == "l":  # Line
-                    # Cleanup of potential 1
-                    coordinates[-1] = coordinates[-1][:2]
-                    doing_bezier = False
-                    coordinates.append([last_node[0] + cord[0], last_node[1] + cord[1]])
-
-                elif arg == "c":  # Bezier line
-                    controll_points_left = 2
-                    doing_bezier = True
-                    if len(coordinates[-1]) == 2:
-                        coordinates[-1].append(1)
-                    coordinates.append([last_node[0] + cord[0], last_node[1] + cord[1]])
-
-                elif arg == "z":  # Close curve
-                    # Cleanup of potential 1
-                    coordinates[-1] = coordinates[-1][:2]
-                    coordinates.append([start_point[0], start_point[1], 18])
-                    start_point = [start_point[0] + cord[0], start_point[1] + cord[1]]
-
-                elif arg == "m":  # Relative coordinates
-                    doing_bezier = False
-                    start_point = [last_node[0] + cord[0], last_node[1] + cord[1]]
-                    coordinates.append(start_point)
-
-                else:
-                    print(d)
-
+    arg = "m"
+    i = 0
+    while i < len(d):
+        item = d[i]
+        if item.isalpha():
+            skip_next = True
+            arg = item.lower()
+            if item.isupper():
+                is_rel_coord = False
             else:
-                cord = [int(float(i)*SCALE) for i in item.split(",")]
-                if doing_bezier:
-                    if controll_points_left == 0:
-                        controll_points_left = 3
-                        last_node = coordinates[-1]
-                    controll_points_left -= 1
-                else:
-                    if is_rel_coord:
-                        last_node = coordinates[-1]
+                is_rel_coord = True
 
-                if not is_rel_coord:
-                    # Absolute position
-                    last_node = [0, 0]
-                if controll_points_left==0 and doing_bezier:
-                    coordinates.append([last_node[0] + cord[0], last_node[1] + cord[1], 1])
-                else:
-                    coordinates.append([last_node[0] + cord[0], last_node[1] + cord[1]])
-        except:
-            print(d)
 
-    # Remove potential 1
-    coordinates[-1] = coordinates[-1][:2]
 
-    # Move objects
-    if path.get("transform"):
+            if item == "z":  # Close curve
+                # Cleanup of potential 1
+                coordinates[-1] = coordinates[-1][:2]
+                coordinates.append([start_point[0], start_point[1], 18])
+
+            i+=1
+        else:
+
+            cord = d[i].split(",")
+            cord = [float(j)*SCALE for j in cord]
+            if is_rel_coord and len(coordinates) > 0: 
+                last_node = coordinates[-1][:2]
+            else:
+                last_node = [0, 0]
+
+
+            if arg == "v":
+                n=1
+                last_node[0] = coordinates[-1][0]
+                coordinates.append([last_node[0], cord[0] + last_node[1]])
+                i+=1
+
+
+            elif arg == "h":
+                last_node[1] = coordinates[-1][1]
+                coordinates.append([last_node[0] + cord[0], last_node[1]])
+                i+=1
+
+            elif arg == "l":  # Line
+                # Cleanup of potential 1
+                coordinates[-1] = coordinates[-1][:2]
+                coordinates.append([last_node[0] + cord[0], last_node[1] + cord[1]])
+                i+=1
+
+
+            elif arg == "q":
+                n=2
+                cords = get_coords(d, n, i, is_rel_coord, last_node)
+
+                C0 = coordinates[-1][:2]
+                C1 = [a + 2/3*(b-a) for a, b in zip(C0, cords[0])]
+                C2 = [c + 2/3*(b-c) for b, c in zip(cords[0], cords[1])]
+                C3 = cords[1]
+                if len(coordinates[-1]) == 2:
+                    coordinates[-1].append(1)
+                coordinates.append(C1)
+                coordinates.append(C2)
+                coordinates.append(C3)
+                i+=n
+
+            elif arg == "c":  # Bezier line
+                n=3
+                cords = get_coords(d, n, i, is_rel_coord, last_node)
+
+                if len(coordinates[-1]) == 2:
+                    coordinates[-1].append(1)
+                coordinates.append(cords[0])
+                coordinates.append(cords[1])
+                coordinates.append(cords[2])
+                i+=n
+
+
+            elif arg == "m":  # Relative coordinates
+                start_point = [last_node[0] + cord[0], last_node[1] + cord[1]]
+                coordinates.append(start_point)
+                arg = "l"
+                i+=1
+            
+            else:
+                print(d)
+                i+=1
+    i+=1
+
+    def transform(coordinates, path):
         transform = path.get("transform")
         if transform[:9] == "translate":
             x, y = transform[10:-1].split(",")
-            x = int(float(x)*SCALE)
-            y = int(float(y)*SCALE)
+            x = float(x)*SCALE
+            y = float(y)*SCALE
+            return [[C[0]+x, C[1]+y, C[2]]  if len(C)==3 else [C[0]+x, C[1]+y] for C in coordinates]
+        
+        elif transform[:6] == "matrix":
+            a, b, c, d, e, f = map(float, transform[7:-1].split(","))
+            # newX = a * oldX + c * oldY + e 
+            # newY = b * oldX + d * oldY + f 
+            return [[C[0]*a + C[1]*c+e*SCALE, C[0]*b + C[1]*d+f*SCALE, C[2]]  if len(C)==3 else [C[0]*a + C[1]*c+e*SCALE, C[0]*b + C[1]*d+f*SCALE] for C in coordinates]
 
-            coordinates = [[c[0]+x, c[1]+y, c[2]]  if len(c)==3 else [c[0]+x, c[1]+y] for c in coordinates]
+    if path.get("transform"):
+        coordinates = transform(coordinates, path)
+
+    elif PARENT_MAP[path].get("transform"):
+        coordinates = transform(coordinates, PARENT_MAP[path])
+
 
     if FLIP_Y:
-        # Reverse y-component
-        coordinates = [[c[0], -c[1], c[2]]  if len(c)==3 else [c[0], -c[1]] for c in coordinates]
+        # Reverse y-component, convert to int
+        coordinates = [[int(c[0]), -int(c[1]), c[2]]  if len(c)==3 else [int(c[0]), -int(c[1])] for c in coordinates]
+    else:
+        coordinates = [[int(c[0]), int(c[1]), c[2]]  if len(c)==3 else [int(c[0]), int(c[1])] for c in coordinates]
+
 
     str_coord =  ";".join([" ".join([str(i) for i in s]) for s in coordinates])
     obj = ET.Element('object', type="1", symbol=str(last_symbol))
     coords = ET.SubElement(obj, 'coords', count=str(len(coordinates)))
-    if d[-1].lower() == "z":
-        coords.text = str_coord + " 16;"
-    else:
-        coords.text = str_coord + " 18;"
+    coords.text = str_coord+";"
     pattern = ET.SubElement(obj, 'pattern', rotation="0")
     coord = ET.SubElement(pattern, 'coord', x="0", y="0")
     objects.append(obj)
