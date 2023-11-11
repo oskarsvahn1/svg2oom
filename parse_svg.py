@@ -171,7 +171,54 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
                 i+=n
 
 
+            elif arg == "a":
+                def add_start(cord):
+                    return [last_node[0]+cord[0]-r_x, last_node[1]+cord[1]]
+
+                last_node[1] = coordinates[-1][1]
+                cord = d[i].split(",")
+                r_x, r_y = [float(j)*SCALE for j in cord]
+                # https://pomax.github.io/bezierinfo/#circles_cubic
+                k=0.551784777779014
+                
+                q1 = [r_x, 0]
+                q2 = [r_x,  r_y*k]
+                q3 = [k*r_x, r_y]
+                q4 = [0, r_y]
+                q5 = [-k*r_x, r_y]
+                q6 = [-r_x, k*r_y]
+                q7 = [-r_x, 0]
+                q8 = [-r_x, -k*r_y]
+                q9 = [-k*r_x, -r_y]
+                q10 = [0, -r_y]
+                q11 = [k*r_x, -r_y]
+                q12 = [r_x, -k*r_y]
+
+                # coordinates.append(add_start(q1))
+                coordinates[-1] = add_start(q1)
+                start_point = add_start(q1)
+                coordinates[-1].append(1)
+                coordinates.append(add_start(q2))
+                coordinates.append(add_start(q3))
+                coordinates.append(add_start(q4))
+                coordinates[-1].append(1)
+                coordinates.append(add_start(q5))
+                coordinates.append(add_start(q6))
+                coordinates.append(add_start(q7))
+                coordinates[-1].append(1)
+                coordinates.append(add_start(q8))
+                coordinates.append(add_start(q9))
+                coordinates.append(add_start(q10))
+                coordinates[-1].append(1)
+                coordinates.append(add_start(q11))
+                coordinates.append(add_start(q12))
+                arg = "a"
+                i+=20 #?
+
+
             elif arg == "m":  # Relative coordinates
+                if len(coordinates)>0 and len(coordinates[-1]) < 3:
+                    coordinates[-1].append(18)
                 start_point = [last_node[0] + cord[0], last_node[1] + cord[1]]
                 coordinates.append(start_point)
                 arg = "l"
@@ -195,6 +242,8 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
             # newX = a * oldX + c * oldY + e 
             # newY = b * oldX + d * oldY + f 
             return [[C[0]*a + C[1]*c+e*SCALE, C[0]*b + C[1]*d+f*SCALE, C[2]]  if len(C)==3 else [C[0]*a + C[1]*c+e*SCALE, C[0]*b + C[1]*d+f*SCALE] for C in coordinates]
+        else:
+            return coordinates
 
     if path.get("transform"):
         coordinates = transform(coordinates, path)
