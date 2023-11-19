@@ -1,9 +1,10 @@
 import xml.etree.ElementTree as ET
 
 SCALE = 100
-FLIP_Y = False
+FLIP_Y = True
+POINT_SYMBOL = True
 
-tree = ET.parse('Polder_se_cmyk.svg')
+tree = ET.parse('logo.svg')
 root = tree.getroot()
 PARENT_MAP = {c: p for p in root.iter() for c in p}
 out_root = ET.Element('map', xmlns="http://openorienteering.org/apps/mapper/xml/v2", version="9")
@@ -53,6 +54,29 @@ def get_coords(d, n, start, is_rel_coord, last_node=[0,0]):
 
 last_symbol = 0
 
+if POINT_SYMBOL:
+    symbol = ET.SubElement(symbols, 'symbol', type="1", id="0", code="999", name="SVG-logo")
+    point_symbol = ET.SubElement(symbol, 'point_symbol', inner_radius="250", inner_color="-1", outer_width="0", outer_color="-1", elements="30")
+
+
+def add_element(symbol_color_nb, object_coordinates, stroke_width):
+    element = ET.SubElement(point_symbol, 'element')
+
+    if stroke_width:
+        symbol = ET.SubElement(element, 'symbol', type="2", code="")
+        line_symbol = ET.SubElement(symbol, 'line_symbol', color=symbol_color_nb, line_width=str(int(float(stroke_width)*SCALE)), join_style="2", cap_style="1")
+    else:
+        symbol = ET.SubElement(element, 'symbol', type="4", code="")
+        area_symbol = ET.SubElement(symbol, 'area_symbol', inner_color=symbol_color_nb, min_area="0", patterns="0")
+
+    obj = ET.SubElement(element, 'object', type="1")
+    coords = ET.SubElement(obj, 'coords', count=str(len(object_coordinates)))
+    coords.text = ";".join([" ".join([str(i) for i in s]) for s in object_coordinates]) + ";"
+    pattern = ET.SubElement(obj, 'pattern', rotation="0")
+    coord = ET.SubElement(pattern, 'coord', x="0", y="0")
+
+
+
 for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
     # Process i reverse because we want to have the last elements at top and with lowest priority (=at the top) in mapper
     style = path.get('style')
@@ -61,7 +85,7 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
     fill_color = None
     if not style:
         continue
-
+    stroke_width = 0
     style = {i.split(":")[0]: i.split(":")[1] for i in style.split(";")}
     if style.get("stroke") and not style.get("stroke") == "none":
         stroke_color = style.get("stroke")
@@ -71,7 +95,8 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
             last_style = style
             last_stroke_color = stroke_color
             add_color(str(last_symbol), stroke_color)
-            add_line_symbol(str(last_symbol), int(float(stroke_width)*SCALE))
+            if not POINT_SYMBOL:
+                add_line_symbol(str(last_symbol), int(float(stroke_width)*SCALE))
 
     elif style.get("fill") and not style.get("fill") == "none":
         fill_color = style.get("fill")
@@ -82,7 +107,8 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
             last_symbol+=1
             last_style = style
             add_color(str(last_symbol), fill_color)
-            add_area_symbol(str(last_symbol))
+            if not POINT_SYMBOL:
+                add_area_symbol(str(last_symbol))
 
     d = path.get('d')
     coordinates = []
@@ -253,15 +279,16 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
         coordinates = [[int(c[0]), -int(c[1]), c[2]]  if len(c)==3 else [int(c[0]), -int(c[1])] for c in coordinates]
     else:
         coordinates = [[int(c[0]), int(c[1]), c[2]]  if len(c)==3 else [int(c[0]), int(c[1])] for c in coordinates]
-
-
-    str_coord =  ";".join([" ".join([str(i) for i in s]) for s in coordinates])
-    obj = ET.Element('object', type="1", symbol=str(last_symbol))
-    coords = ET.SubElement(obj, 'coords', count=str(len(coordinates)))
-    coords.text = str_coord+";"
-    pattern = ET.SubElement(obj, 'pattern', rotation="0")
-    coord = ET.SubElement(pattern, 'coord', x="0", y="0")
-    objects.append(obj)
+    if  POINT_SYMBOL:
+        add_element(str(last_symbol-1), coordinates, stroke_width)
+    else:
+        str_coord =  ";".join([" ".join([str(i) for i in s]) for s in coordinates])
+        obj = ET.Element('object', type="1", symbol=str(last_symbol))
+        coords = ET.SubElement(obj, 'coords', count=str(len(coordinates)))
+        coords.text = str_coord+";"
+        pattern = ET.SubElement(obj, 'pattern', rotation="0")
+        coord = ET.SubElement(pattern, 'coord', x="0", y="0")
+        objects.append(obj)
 
 out_root = ET.ElementTree(out_root)
 ET.indent(out_root, '  ')
