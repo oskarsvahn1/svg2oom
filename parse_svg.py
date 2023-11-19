@@ -1,11 +1,12 @@
 import xml.etree.ElementTree as ET
-SCALE = 10
+
+SCALE = 100
 FLIP_Y = False
+POINT_SYMBOL = True
 
-tree = ET.parse('loggaa.svg')
+tree = ET.parse('Polder_se_cmyk.svg')
 root = tree.getroot()
-PARENT_MAP = {c:p for p in root.iter( ) for c in p}
-
+PARENT_MAP = {c: p for p in root.iter() for c in p}
 out_root = ET.Element('map', xmlns="http://openorienteering.org/apps/mapper/xml/v2", version="9")
 # georeferencing = ET.SubElement(root, 'georeferencing', scale="10000")
 # projected_crs = ET.SubElement(georeferencing, 'projected_crs', id="Local")
@@ -15,7 +16,7 @@ barrier = ET.SubElement(out_root, 'barrier', version="6", required="0.6.0")
 colors = ET.SubElement(barrier, 'colors')
 symbols = ET.SubElement(barrier, 'symbols', id="ISOM 2017-2")
 
-# Create a function to add a symbol element
+# out_root = ET.Element('symbols')
 def add_color(id, fill_color):
     h = fill_color.lstrip('#')
     r, g, b = tuple(str(int(h[i:i+2], 16)/255) for i in (0, 2, 4))
@@ -53,6 +54,27 @@ def get_coords(d, n, start, is_rel_coord, last_node=[0,0]):
     return cords
 
 last_symbol = 0
+
+# # Create a function to add a symbol element
+# def add_symbol(id, code, name, description, point_symbol):
+#     symbol = ET.SubElement(out_root, 'symbol', type="1", id=id, code=code, name=name)
+#     ET.SubElement(symbol, 'description').text = description
+#     if point_symbol:
+#         point_symbol_element = ET.SubElement(symbol, 'point_symbol', inner_radius="250", inner_color="-1",
+#                                               outer_width="0", outer_color="-1", elements="30")
+#         point_symbol_element.append(point_symbol)
+
+# def add_point_symbol_element(type_, code, inner_color, min_area, patterns, coords):
+#     element = ET.SubElement(point_symbol, 'element')
+#     symbol = ET.SubElement(element, 'symbol', type=str(type_), code=code)
+#     area_symbol = ET.SubElement(symbol, 'area_symbol', inner_color=inner_color, min_area=min_area, patterns=patterns)
+#     obj = ET.SubElement(symbol, 'object', type="1")
+#     coords_element = ET.SubElement(obj, 'coords', count=str(len(coords)))
+#     coords_element.text = ';'.join([' '.join(map(str, coord)) for coord in coords]) + ';'
+#     pattern = ET.SubElement(obj, 'pattern', rotation="0")
+#     coord = ET.SubElement(pattern, 'coord', x="0", y="0")
+
+# Process each path in reverse order
 for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
     # Process i reverse because we want to have the last elements at top and with lowest priority (=at the top) in mapper
     style = path.get('style')
@@ -62,9 +84,8 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
     if not style:
         continue
 
-    # style = style.split(';')
     style = {i.split(":")[0]: i.split(":")[1] for i in style.split(";")}
-    if style.get("stroke") and not style.get("stroke")=="none" :
+    if style.get("stroke") and not style.get("stroke") == "none":
         stroke_color = style.get("stroke")
         stroke_width = style.get("stroke-width")
         if not style == last_style:
@@ -72,9 +93,10 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
             last_style = style
             last_stroke_color = stroke_color
             add_color(str(last_symbol), stroke_color)
+            # if not POINT_SYMBOL:
             add_line_symbol(str(last_symbol), int(float(stroke_width)*SCALE))
 
-    elif style.get("fill") and not style.get("fill")=="none" :
+    elif style.get("fill") and not style.get("fill") == "none":
         fill_color = style.get("fill")
         if fill_color[:15] == "url(#linearGrad":
             # Skip gradients
@@ -83,6 +105,7 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
             last_symbol+=1
             last_style = style
             add_color(str(last_symbol), fill_color)
+            # if not POINT_SYMBOL:
             add_area_symbol(str(last_symbol))
 
     d = path.get('d')
@@ -109,7 +132,7 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
 
 
 
-            if item == "z":  # Close curve
+            if arg== "z":  # Close curve
                 # Cleanup of potential 1
                 coordinates[-1] = coordinates[-1][:2]
                 coordinates.append([start_point[0], start_point[1], 18])
@@ -258,7 +281,8 @@ for path in reversed(root.findall('.//{http://www.w3.org/2000/svg}path')):
     else:
         coordinates = [[int(c[0]), int(c[1]), c[2]]  if len(c)==3 else [int(c[0]), int(c[1])] for c in coordinates]
 
-
+    if coordinates[-1][1]==9096:
+        pass
     str_coord =  ";".join([" ".join([str(i) for i in s]) for s in coordinates])
     obj = ET.Element('object', type="1", symbol=str(last_symbol))
     coords = ET.SubElement(obj, 'coords', count=str(len(coordinates)))
