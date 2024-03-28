@@ -1,5 +1,6 @@
 import xml.etree.ElementTree as ET
 import argparse
+import re
 
 class SVGConverter:
     def __init__(self, filename, scale=100, flip_y=True, do_point_symbol=True):
@@ -9,6 +10,9 @@ class SVGConverter:
 
         self.tree = ET.parse(filename)
         self.root = self.tree.getroot()
+        # self.width = self.tree.getroot().attrib["width"]
+        # self.heigth = self.tree.getroot().attrib["height"]
+
         self.parent_map = {c: p for p in self.root.iter() for c in p}
         self.map = ET.Element('map', xmlns="http://openorienteering.org/apps/mapper/xml/v2", version="9")
         self.colors = ET.SubElement(self.map, 'colors')
@@ -31,8 +35,11 @@ class SVGConverter:
         self.point_symbol = ET.SubElement(symbol, 'point_symbol', inner_radius="250", inner_color="-1", outer_width="0", outer_color="-1", elements="30")
 
     def add_color(self, id, fill_color):
-        h = fill_color.lstrip('#')
-        r, g, b = tuple(str(int(h[i:i+2], 16)/255) for i in (0, 2, 4))
+        if fill_color=="#000":
+            r, g, b = 0, 0, 0
+        else:
+            h = fill_color.lstrip('#')            
+            r, g, b = tuple(str(int(h[i:i+2], 16)/255) for i in (0, 2, 4))
         id = str(id)
         color = ET.SubElement(self.colors, 'color', priority=str(int(id)-1), name=f"SVG_{id}", c="0.35", m="0.85", y="0", k="0", opacity="1")
         ET.SubElement(color, 'rgb', method="custom", r=r, g=g, b=b)
@@ -94,15 +101,21 @@ class SVGConverter:
         style = path.get('style')
         if not style:
             style = self.parent_map[path].get("style")
+        if not style:
+            style = self.parent_map[path].attrib
+
         fill_color = None
         if not style:
             return
 
         stroke_width = 0
-        style = {i.split(":")[0]: i.split(":")[1] for i in style.split(";")}
+        if type(style)==str:
+            style = {i.split(":")[0]: i.split(":")[1] for i in style.split(";")}
         if style.get("stroke") and not style.get("stroke") == "none":
             stroke_color = style.get("stroke")
             stroke_width = style.get("stroke-width")
+            if stroke_width[-2:]=="px":
+                stroke_width = stroke_width[:1]
             if not style == self.last_style:
                 self.last_symbol += 1
                 self.last_style = style
@@ -121,7 +134,17 @@ class SVGConverter:
                 if not self.do_point_symbol:
                     self.add_area_symbol(str(self.last_symbol))
 
-        d = path.get('d')
+        d = path.get('d').strip()
+        d = re.sub(r'([a-zA-Z]+)(\d+)', r'\1 \2', d)
+        # d = re.sub(r'([a-zA-Z]+)(\d+)(-?)(\d*)', r'\1 \2\3\4', d)
+        d = re.sub(r'(\d)(-)', r'\1 \2', d)
+        # d = re.sub(r'(\s+)', lambda m: ',' if m.start() % 2 == 1 else ' ', d)
+
+        # if space and comma is interchanged
+        # d = re.sub(r'(\d\s\d)', 'ä', d)
+        # d = re.sub(r',', ' ', d)
+        # d = re.sub(r'ä', ',', d)
+
         coordinates = []
         d = d.split(" ")
         last_node = [0, 0]
@@ -132,7 +155,6 @@ class SVGConverter:
         while i < len(d):
             item = d[i]
             if item.isalpha():
-                skip_next = True
                 arg = item.lower()
                 if item.isupper():
                     is_rel_coord = False
@@ -147,7 +169,7 @@ class SVGConverter:
             else:
                 cord = d[i].split(",")
                 cord = [float(j) * self.scale for j in cord]
-                if is_rel_coord and len(coordinates) > 0:
+                if is_rel_coord and coordinates:
                     last_node = coordinates[-1][:2]
                 else:
                     last_node = [0, 0]
@@ -189,10 +211,51 @@ class SVGConverter:
                     coordinates.append(cords[2])
                     i += n
                 elif arg == "a":
-                    # ... (unchanged)
-                    i += 20  # ?
+                    def add_start(cord):
+                        return [last_node[0]+cord[0]-r_x, last_node[1]+cord[1]]
+
+                    last_node[1] = coordinates[-1][1]
+                    cord = d[i].split(",")
+                    r_x, r_y = [float(j)*self.scale for j in cord]
+                    # https://pomax.github.io/bezierinfo/#circles_cubic
+                    k=0.551784777779014
+                    
+                    q1 = [r_x, 0]
+                    q2 = [r_x,  r_y*k]
+                    q3 = [k*r_x, r_y]
+                    q4 = [0, r_y]
+                    q5 = [-k*r_x, r_y]
+                    q6 = [-r_x, k*r_y]
+                    q7 = [-r_x, 0]
+                    q8 = [-r_x, -k*r_y]
+                    q9 = [-k*r_x, -r_y]
+                    q10 = [0, -r_y]
+                    q11 = [k*r_x, -r_y]
+                    q12 = [r_x, -k*r_y]
+
+                    # coordinates.append(add_start(q1))
+                    coordinates[-1] = add_start(q1)
+                    start_point = add_start(q1)
+                    coordinates[-1].append(1)
+                    coordinates.append(add_start(q2))
+                    coordinates.append(add_start(q3))
+                    coordinates.append(add_start(q4))
+                    coordinates[-1].append(1)
+                    coordinates.append(add_start(q5))
+                    coordinates.append(add_start(q6))
+                    coordinates.append(add_start(q7))
+                    coordinates[-1].append(1)
+                    coordinates.append(add_start(q8))
+                    coordinates.append(add_start(q9))
+                    coordinates.append(add_start(q10))
+                    coordinates[-1].append(1)
+                    coordinates.append(add_start(q11))
+                    coordinates.append(add_start(q12))
+                    arg = "a"
+                    i+=20 #?
+
                 elif arg == "m":  # Relative coordinates
-                    if len(coordinates) > 0 and len(coordinates[-1]) < 3:
+                    if coordinates and len(coordinates[-1]) < 3:
                         coordinates[-1].append(18)
                     start_point = [last_node[0] + cord[0], last_node[1] + cord[1]]
                     coordinates.append(start_point)
