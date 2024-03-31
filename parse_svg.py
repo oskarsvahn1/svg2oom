@@ -7,11 +7,13 @@ class SVGConverter:
         self.scale = scale
         self.flip_y = flip_y
         self.do_point_symbol = do_point_symbol
+        self.max_x, self.min_x, self.max_y, self.min_y = None, None, None, None
 
         self.tree = ET.parse(filename)
+        self.filename = filename
         self.root = self.tree.getroot()
-        # self.width = self.tree.getroot().attrib["width"]
-        # self.heigth = self.tree.getroot().attrib["height"]
+        self.width = float(self.tree.getroot().attrib["width"][:-2])
+        self.heigth = float(self.tree.getroot().attrib["height"][:-2])
 
         self.parent_map = {c: p for p in self.root.iter() for c in p}
         self.map = ET.Element('map', xmlns="http://openorienteering.org/apps/mapper/xml/v2", version="9")
@@ -31,7 +33,7 @@ class SVGConverter:
             self.create_point_symbol()
 
     def create_point_symbol(self):
-        symbol = ET.SubElement(self.symbols, 'symbol', type="1", id="0", code="999", name="SVG-logo")
+        symbol = ET.SubElement(self.symbols, 'symbol', type="1", id="0", code="999", name=self.filename[:-4])
         self.point_symbol = ET.SubElement(symbol, 'point_symbol', inner_radius="250", inner_color="-1", outer_width="0", outer_color="-1", elements="30")
 
     def add_color(self, id, fill_color):
@@ -55,6 +57,24 @@ class SVGConverter:
         ET.SubElement(symbol, 'description')
         ET.SubElement(symbol, 'line_symbol', color=str(int(id)-1), line_width=str(width), join_style="2", cap_style="1")
 
+    def add_coords2obj(self, obj, coordinates):
+        coords = ET.SubElement(obj, 'coords', count=str(len(coordinates)))
+        coords.text = ";".join([" ".join([str(i) for i in s]) for s in coordinates]) + ";"
+        pattern = ET.SubElement(obj, 'pattern', rotation="0")
+        coord = ET.SubElement(pattern, 'coord', x="0", y="0")
+
+    def add_element(self, symbol_color_nb, coordinates, stroke_width):
+        element = ET.SubElement(self.point_symbol, 'element')
+        if stroke_width:
+            symbol = ET.SubElement(element, 'symbol', type="2", code="")
+            line_symbol = ET.SubElement(symbol, 'line_symbol', color=symbol_color_nb, line_width=str(int(float(stroke_width)*self.scale)), join_style="2", cap_style="1")
+        else:
+            symbol = ET.SubElement(element, 'symbol', type="4", code="")
+            area_symbol = ET.SubElement(symbol, 'area_symbol', inner_color=symbol_color_nb, min_area="0", patterns="0")
+
+        obj = ET.SubElement(element, 'object', type="1")
+        self.add_coords2obj(obj, coordinates)
+
     def get_coords(self, d, n, start, is_rel_coord, last_node):
         cords = []
         for i in range(start, start+n):
@@ -64,22 +84,6 @@ class SVGConverter:
                 cord = [last_node[0] + cord[0], last_node[1] + cord[1]]
             cords.append(cord)
         return cords
-
-    def add_element(self, symbol_color_nb, object_coordinates, stroke_width):
-        element = ET.SubElement(self.point_symbol, 'element')
-
-        if stroke_width:
-            symbol = ET.SubElement(element, 'symbol', type="2", code="")
-            line_symbol = ET.SubElement(symbol, 'line_symbol', color=symbol_color_nb, line_width=str(int(float(stroke_width)*self.scale)), join_style="2", cap_style="1")
-        else:
-            symbol = ET.SubElement(element, 'symbol', type="4", code="")
-            area_symbol = ET.SubElement(symbol, 'area_symbol', inner_color=symbol_color_nb, min_area="0", patterns="0")
-
-        obj = ET.SubElement(element, 'object', type="1")
-        coords = ET.SubElement(obj, 'coords', count=str(len(object_coordinates)))
-        coords.text = ";".join([" ".join([str(i) for i in s]) for s in object_coordinates]) + ";"
-        pattern = ET.SubElement(obj, 'pattern', rotation="0")
-        coord = ET.SubElement(pattern, 'coord', x="0", y="0")
 
     def transform(self, coordinates, path):
         transform = path.get("transform")
@@ -93,7 +97,17 @@ class SVGConverter:
             a, b, c, d, e, f = map(float, transform[7:-1].split(","))
             # newX = a * oldX + c * oldY + e 
             # newY = b * oldX + d * oldY + f 
+            # Works only on point symbols
+            if self.symbols[-1][-1] and self.symbols[-1][-1][-1][0][0].tag == 'line_symbol':
+                self.symbols[-1][-1][-1][0][0].set("line_width", str(int(a * float(self.symbols[-1][-1][-1][0][0].attrib["line_width"]))))
             return [[C[0]*a + C[1]*c+e*self.scale, C[0]*b + C[1]*d+f*self.scale, C[2]]  if len(C)==3 else [C[0]*a + C[1]*c+e*self.scale, C[0]*b + C[1]*d+f*self.scale] for C in coordinates]
+        elif transform[:5] == "scale":
+            s = float(transform[6:-1])
+            if self.symbols[-1][-1] and self.symbols[-1][-1][-1][0][0].tag == 'line_symbol':
+                self.symbols[-1][-1][-1][0][0].set("line_width", str(int(s * float(self.symbols[-1][-1][-1][0][0].attrib["line_width"]))))
+
+            return [[C[0]*s, C[1]*s, C[2]]  if len(C)==3 else [C[0]*s, C[1]*s] for C in coordinates]
+
         else:
             return coordinates
 
@@ -135,8 +149,15 @@ class SVGConverter:
                     self.add_area_symbol(str(self.last_symbol))
 
         d = path.get('d').strip()
-        d = re.sub(r'([a-zA-Z]+)(\d+)', r'\1 \2', d)
+
+        # split m1, m-1, 1m -> m 1, m -1, 1 m
+        d = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', d)
+        d = re.sub(r'([a-zA-Z])(-\d)', r'\1 \2', d)
+        d = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', d)
+
         # d = re.sub(r'([a-zA-Z]+)(\d+)(-?)(\d*)', r'\1 \2\3\4', d)
+
+        #split 1-2 -> 1 -2
         d = re.sub(r'(\d)(-)', r'\1 \2', d)
         # d = re.sub(r'(\s+)', lambda m: ',' if m.start() % 2 == 1 else ' ', d)
 
@@ -272,6 +293,15 @@ class SVGConverter:
 
         elif self.parent_map[path].get("transform"):
             coordinates = self.transform(coordinates, self.parent_map[path])
+        elif self.parent_map[self.parent_map[path]].get("transform"):
+            coordinates = self.transform(coordinates, self.parent_map[self.parent_map[path]])
+        elif self.parent_map[self.parent_map[self.parent_map[path]]].get("transform"):
+            coordinates = self.transform(coordinates, self.parent_map[self.parent_map[self.parent_map[path]]])
+        # elif self.parent_map[self.parent_map[self.parent_map[self.parent_map[path]]]].get("transform"):
+        #     coordinates = self.transform(coordinates, self.parent_map[self.parent_map[self.parent_map[self.parent_map[path]]]])
+        # if self.parent_map[self.parent_map[self.parent_map[self.parent_map[self.parent_map[path]]]]].get("transform"):
+        #     coordinates = self.transform(coordinates, self.parent_map[self.parent_map[self.parent_map[self.parent_map[self.parent_map[path]]]]])
+
 
         if self.flip_y:
             # Reverse y-component, convert to int
@@ -280,15 +310,23 @@ class SVGConverter:
             coordinates = [[int(c[0]), int(c[1]), c[2]] if len(c) == 3 else [int(c[0]), int(c[1])] for c in coordinates]
 
         if self.do_point_symbol:
-            self.add_element(str(self.last_symbol - 1), coordinates, stroke_width)
-        else:
-            str_coord = ";".join([" ".join([str(i) for i in s]) for s in coordinates])
-            obj = ET.Element('object', type="1", symbol=str(self.last_symbol))
-            coords = ET.SubElement(obj, 'coords', count=str(len(coordinates)))
-            coords.text = str_coord + ";"
-            pattern = ET.SubElement(obj, 'pattern', rotation="0")
-            coord = ET.SubElement(pattern, 'coord', x="0", y="0")
+            if not self.max_x:
+                self.min_x = min([x[0] for x in coordinates])
+                self.min_y = min([x[1] for x in coordinates])
+                self.max_x = max([x[0] for x in coordinates])
+                self.max_y = max([x[1] for x in coordinates])
+            else:
+                self.min_x = min(self.min_x, min([x[0] for x in coordinates]))
+                self.min_y = min(self.min_y, min([x[1] for x in coordinates]))
+                self.max_x = max(self.max_x, max([x[0] for x in coordinates]))
+                self.max_y = max(self.max_y, max([x[1] for x in coordinates]))
 
+            coordinates = [[C[0]-int(self.scale*self.width/2), C[1]-int(self.scale*self.heigth/2), C[2]]  if len(C)==3 else [C[0]-int(self.scale*self.width/2), C[1]-int(self.scale*self.heigth/2)] for C in coordinates]
+            self.add_element(str(self.last_symbol - 1), coordinates, stroke_width)
+
+        else:
+            obj = ET.Element('object', type="1", symbol=str(self.last_symbol))
+            self.add_coords2obj(obj, coordinates)
             self.objects.append(obj)
 
 
@@ -298,19 +336,23 @@ class SVGConverter:
         for path in reversed(self.root.findall('.//{http://www.w3.org/2000/svg}path')):
             self.process_path(path)
 
-    def save_output(self, filename='output.omap'):
+    def save_output(self, filename):
         out_root = ET.ElementTree(self.map)
         ET.indent(out_root, '  ')
+        if not filename:
+            filename = self.filename[:-4]+".omap"
+        print(f"Saving to {filename}")
         out_root.write(filename, encoding="utf-8", xml_declaration=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Convert SVG to OMap format.')
     parser.add_argument('filename', type=str, help='Input SVG file')
+    parser.add_argument('outfile', type=str, nargs='?', default=None, help='Output OMAP file')
     parser.add_argument('--scale', type=int, default=100, help='Scaling factor (default: 100)')
     parser.add_argument('--flip_y', action='store_true', help='Flip Y-coordinate')
-    parser.add_argument('--as_point', action='store_true', help='Disable point symbol')
+    parser.add_argument('--as_point', action='store_true', help='Output path as single point symbol')
     args = parser.parse_args()
 
     converter = SVGConverter(args.filename, scale=args.scale, flip_y=args.flip_y, do_point_symbol=args.as_point)
     converter.process_svg()
-    converter.save_output()
+    converter.save_output(args.outfile)
